@@ -1,6 +1,6 @@
 # Camping Packing App — Design Spec
 
-**Status:** Draft
+**Status:** Reviewed — bereit für User-Approval
 **Date:** 2026-05-20
 **Author:** Yves (brainstormed with Claude)
 
@@ -114,7 +114,13 @@ comments
   created_at      timestamptz
 ```
 
-**RLS-Strategie:** Eine Postgres-Funktion `current_trip_id()` liest den `session_token` aus dem Cookie, looked up `participant.trip_id` und gibt die zurück. Alle Tabellen haben Policy `trip_id = current_trip_id()`.
+**Insert-Reihenfolge (wegen zirkulärer FK trips↔participants):** Trip wird mit `created_by = NULL` angelegt, anschließend der erste Participant; ein nachgelagertes UPDATE setzt `trips.created_by` auf dessen ID.
+
+**RLS-Strategie:** Server Actions sind das einzige Eingangstor — Postgres liest keine Cookies. Konkret:
+- Die Server Action liest den `session_token`-Cookie, schlägt den passenden Participant via Service-Role-Client in einer dedizierten Helper-Funktion nach und kennt damit `trip_id` und `participant.id`.
+- Mutations laufen anschließend über einen **per-request konfigurierten Anon-Key-Client**, der per `set_config('app.current_trip_id', …, true)` die GUC pro Transaktion setzt.
+- Eine SQL-Funktion `current_trip_id()` liest diese GUC. RLS-Policies prüfen `trip_id = current_trip_id()`.
+- Der Service-Role-Client wird ausschließlich für die initiale Session-Resolution und für DB-Migrations verwendet — niemals für User-Mutations, damit RLS nicht umgangen wird.
 
 ## 6. Architektur
 
@@ -144,7 +150,7 @@ comments
 
 **Stack im Detail:**
 - **Frontend:** Next.js 15 (App Router), TypeScript strict, TailwindCSS, shadcn/ui für Komponenten-Basics.
-- **State:** Server Components + Server Actions; clientseitig minimaler State via React Hooks. Realtime-Subscription invalidiert React-Query-Cache (oder Router-Refresh).
+- **State:** Server Components + Server Actions; clientseitig minimaler State via React Hooks. Realtime-Subscription triggert `router.refresh()` — bewusst kein React Query im MVP, weil Router-Refresh die Server-Component-Daten neu rendert und für ~20 Items pro Trip völlig ausreicht. Optimistische Updates pro Claim via `useTransition` + Server-Action-Result.
 - **Backend:** Supabase (Postgres + Realtime + Storage falls später Fotos).
 - **Auth:** Kein klassischer Login. Beim Trip-Join wird ein `participant`-Row angelegt und ein `session_token` als HTTP-only Cookie gesetzt. Cookie + Trip-Code = Identität. Verloren = neuer Name beim nächsten Mal.
 - **Hosting:** Coolify auf Just Ship Cloud (passt zu deinem Setup, Vercel bewusst nicht).
@@ -171,8 +177,9 @@ components/
   Filter.tsx                     Tabs: Alle / Offen / Meine
 
 lib/
-  supabase/server.ts             Server-Client (Service-Role für Setup)
-  supabase/browser.ts            Browser-Client (Anon-Key)
+  supabase/admin.ts              Service-Role-Client (NUR Session-Resolution + Migrations)
+  supabase/server.ts             Anon-Key-Client mit GUC-Setup (für Server Actions)
+  supabase/browser.ts            Browser-Client (Anon-Key, Realtime-Subscriptions)
   realtime.ts                    Channel-Subscription-Hook
   session.ts                     Cookie-Lese/Setz-Logic
   codes.ts                       Join-Code Generator (avoid lookalikes)
@@ -245,7 +252,7 @@ Weitere Templates (Festival, Wandern) bewusst NICHT im MVP.
 |---|---|
 | Join-Code nicht gefunden | Inline-Fehler „Diesen Code gibt's nicht. Schau nochmal." |
 | Cookie verloren / neuer Browser | User wird neu nach Namen gefragt, neuer Participant-Row. Claims des alten gehen verloren. (Toleriert im MVP.) |
-| Realtime-Disconnect | Banner „Verbindung verloren. Tippe zum Neuladen." Polling-Fallback alle 30s. |
+| Realtime-Disconnect | Banner „Verbindung verloren. Tippe zum Neuladen." Kein Polling-Fallback im MVP — Supabase Realtime reconnected automatisch. |
 | Race auf gleiches Item | Postgres-`unique(item_id, participant_id)` verhindert Doppel-Claim derselben Person. Mehrere Personen claimen ok — das ist Feature, nicht Bug. |
 | Quantity-Übersicht | Wenn zugesagt > benötigt: kleines „Schon abgedeckt"-Badge, kein Block. |
 | Item gelöscht während Sheet offen | Sheet schließt sich mit Toast „Item wurde gelöscht". |
@@ -254,13 +261,13 @@ Weitere Templates (Festival, Wandern) bewusst NICHT im MVP.
 
 ## 10. Testing-Strategie
 
-- **Unit:** `lib/codes.ts`, `lib/session.ts`, `lib/templates.ts` — pure Funktionen, Vitest.
-- **Component:** ItemCard, ItemSheet — React Testing Library mit Mock-Daten.
-- **Integration:** Server-Actions gegen Test-Supabase-Schema (lokales `supabase start`), Vitest oder Playwright API-Tests.
-- **E2E:** 1 Smoke-Test in Playwright — „Trip anlegen, joinen, Item claimen, sehen" — auf Mobile-Viewport.
-- **Manuelles QA:** Auf echtem Phone (Yves + ein Buddy) vor Reisetag.
+Bewusst schlank für einen MVP mit ~5–10 Nutzern:
 
-Coverage-Ziel: keine harte Schwelle, aber Server-Actions zu ≥ 80%.
+- **Unit:** `lib/codes.ts`, `lib/session.ts`, `lib/templates.ts` — pure Funktionen, Vitest.
+- **E2E-Smoke:** 1 Playwright-Test auf Mobile-Viewport — Trip anlegen → joinen → Item claimen → Realtime-Update sichtbar.
+- **Manuelles QA:** Auf echtem Phone (Yves + ein Buddy) vor Reisetag — Mobile Safari + Chrome Android.
+
+Component-Tests und dedizierte Integration-Tests bewusst nicht im MVP — der E2E-Smoke deckt den Happy Path ab, Component-Tests sind YAGNI bei diesem Scope. Wenn die App nach dem ersten Trip weiterlebt, erweitern.
 
 ## 11. Open Questions / Punkte zur Klärung später
 
