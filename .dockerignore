@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.env.local
+docs
+tests
+playwright-report
+test-results
+playwright
+supabase/.temp
