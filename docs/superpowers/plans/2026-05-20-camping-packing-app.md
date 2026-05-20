@@ -46,14 +46,14 @@
 │   └── comments.ts                    addComment
 ├── lib/
 │   ├── supabase/
-│   │   ├── admin.ts                   Service-Role-Client (session resolution only)
-│   │   ├── server.ts                  Anon-Key-Client with GUC per request
-│   │   └── browser.ts                 Browser anon client
+│   │   ├── admin.ts                   Service-Role-Client (server-side, bypasses RLS)
+│   │   └── browser.ts                 Browser anon client (Realtime subscriptions only)
+│   ├── auth.ts                        getCurrentParticipant — cookie → participant + trip
 │   ├── realtime.ts                    useTripRealtime hook
-│   ├── session.ts                     Cookie read/write + getCurrentParticipant
+│   ├── session.ts                     Session token + cookie name
 │   ├── codes.ts                       Join-code generator
 │   ├── templates.ts                   Camping template seed
-│   └── types.ts                       Shared TypeScript types (DB row types)
+│   └── database.types.ts              Generated Supabase types
 ├── db/
 │   └── migrations/
 │       ├── 0001_init.sql
@@ -95,14 +95,17 @@
 
 ```bash
 cd "/Users/yschleich/Developer/Packing App"
-# We already have .git, so use --use-npm and skip git init
+# create-next-app refuses non-empty dirs. Move docs/ aside, scaffold, move back.
+mv docs /tmp/_packing_docs_stash
 npx create-next-app@latest . \
   --typescript --tailwind --app --src-dir false \
   --import-alias "@/*" --eslint --use-npm --no-turbopack --skip-install \
   --yes
+mv /tmp/_packing_docs_stash docs
 ```
 
 If interactive prompts appear, accept all defaults that match (TypeScript yes, Tailwind yes, App Router yes, src/ no).
+Note: `.git`, `.gitignore`, `README.md` are tolerated; `.claude/` and `docs/` are not. Only `docs/` needs stashing because `.claude/` predates the scaffold and is ignored by the CLI's safety check.
 
 - [ ] **Step 2: Install dependencies**
 
@@ -607,7 +610,7 @@ create table items (
   quantity_needed int  not null default 1 check (quantity_needed >= 1),
   note            text,
   created_at      timestamptz not null default now(),
-  created_by      uuid not null references participants(id) on delete set null
+  created_by      uuid references participants(id) on delete set null
 );
 
 create table claims (
@@ -664,64 +667,40 @@ git commit -m "feat(db): initial schema for trips, participants, items, claims, 
 
 ---
 
-### Task 10: RLS + current_trip_id GUC
+### Task 10: RLS + Realtime publication
 
 **Files:**
 - Create: `supabase/migrations/0002_rls.sql`
+
+> **Design decision (revised from spec):** The original spec called for a per-transaction GUC (`current_trip_id`) read by RLS policies. That approach is incompatible with supabase-js: each PostgREST call is a separate HTTP request and a separate Postgres transaction, so a transaction-local GUC set via one RPC is gone before the next query runs. Session-local GUCs leak across pooled connections and are also unsafe.
+>
+> **Revised approach for the MVP:**
+> - **Server Actions are the trust boundary.** They read the session cookie, resolve the participant → `trip_id`, validate that the resource being touched belongs to that trip, and use the **service-role client** for the mutation.
+> - **RLS stays enabled** as defense-in-depth: anon role gets SELECT on the four trip-scoped tables (data is friends-only — packing lists, not PII), and all writes are denied for anon. Service-role bypasses RLS by design, so server actions still work.
+> - **Realtime** uses the anon key with `postgres_changes` filters (`trip_id=eq.<uuid>`). The filter is enforced server-side by Realtime; an attacker would need to guess a 36-char UUID to listen to a trip.
+>
+> This is YAGNI-appropriate for ~5–10 friends sharing a packing list. Tighten later if the app outgrows that audience.
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
 -- supabase/migrations/0002_rls.sql
-create or replace function current_trip_id() returns uuid
-language sql stable as $$
-  select nullif(current_setting('app.current_trip_id', true), '')::uuid
-$$;
-
 alter table trips         enable row level security;
 alter table participants  enable row level security;
 alter table items         enable row level security;
 alter table claims        enable row level security;
 alter table comments      enable row level security;
 
--- Trips: visible to anyone whose current_trip_id matches (post-join) OR
--- by join_code lookup (handled in admin client, not via RLS).
-create policy trips_select on trips for select
-  using (id = current_trip_id());
-create policy trips_update on trips for update
-  using (id = current_trip_id());
+-- Anon may SELECT (data isn't sensitive; access requires guessing a trip UUID).
+-- All writes go through Server Actions using the service_role key, which bypasses RLS.
+create policy anon_select_trips        on trips        for select to anon using (true);
+create policy anon_select_participants on participants for select to anon using (true);
+create policy anon_select_items        on items        for select to anon using (true);
+create policy anon_select_claims       on claims       for select to anon using (true);
+create policy anon_select_comments     on comments     for select to anon using (true);
 
--- Participants
-create policy participants_select on participants for select
-  using (trip_id = current_trip_id());
-create policy participants_insert on participants for insert
-  with check (trip_id = current_trip_id());
-
--- Items
-create policy items_select on items for select
-  using (trip_id = current_trip_id());
-create policy items_insert on items for insert
-  with check (trip_id = current_trip_id());
-create policy items_update on items for update
-  using (trip_id = current_trip_id());
-create policy items_delete on items for delete
-  using (trip_id = current_trip_id());
-
--- Claims
-create policy claims_select on claims for select
-  using (trip_id = current_trip_id());
-create policy claims_insert on claims for insert
-  with check (trip_id = current_trip_id());
-create policy claims_delete on claims for delete
-  using (trip_id = current_trip_id());
-
--- Comments
-create policy comments_select on comments for select
-  using (trip_id = current_trip_id());
-create policy comments_insert on comments for insert
-  with check (trip_id = current_trip_id());
-create policy comments_delete on comments for delete
-  using (trip_id = current_trip_id());
+-- No INSERT/UPDATE/DELETE policies for anon → those operations are denied for anon.
+-- (Server actions use service_role and bypass RLS entirely.)
 
 -- Realtime publication
 alter publication supabase_realtime add table items;
@@ -738,19 +717,22 @@ npx supabase db reset
 
 Expected: both migrations succeed.
 
-- [ ] **Step 3: Smoke test the GUC**
+- [ ] **Step 3: Smoke test the RLS posture**
 
 ```bash
-npx supabase db psql -c "select set_config('app.current_trip_id', gen_random_uuid()::text, true), current_trip_id();"
+# As anon: SELECT works
+npx supabase db psql -c "set role anon; select count(*) from items;"
+# As anon: INSERT fails
+npx supabase db psql -c "set role anon; insert into items (trip_id, name, category) values (gen_random_uuid(), 'x', 'sonstiges');" || echo "INSERT denied (expected)"
 ```
 
-Expected: a UUID returned by `current_trip_id()`.
+Expected: SELECT succeeds (count 0), INSERT errors out with "new row violates row-level security policy".
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add supabase/migrations/0002_rls.sql
-git commit -m "feat(db): enable RLS with current_trip_id GUC"
+git commit -m "feat(db): RLS with anon SELECT-only + realtime publication"
 ```
 
 ---
@@ -786,48 +768,15 @@ export function supabaseAdmin() {
 }
 ```
 
-- [ ] **Step 3: Write `lib/supabase/server.ts`**
-
-```ts
-// lib/supabase/server.ts
-import 'server-only'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import type { Database } from '@/lib/database.types'
-
-// Anon-key client; consumer is expected to set the current_trip_id GUC
-// before queries by calling `setTripContext(client, tripId)` once per request.
-export async function supabaseServer() {
-  const cookieStore = await cookies()
-  return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => cookieStore.getAll(),
-        setAll: (toSet) => toSet.forEach(({ name, value, options }) =>
-          cookieStore.set(name, value, options)),
-      },
-    },
-  )
-}
-
-export async function setTripContext(
-  client: Awaited<ReturnType<typeof supabaseServer>>,
-  tripId: string,
-) {
-  // PostgREST exposes set_config via an RPC we define in the next task.
-  await client.rpc('set_current_trip', { p_trip_id: tripId })
-}
-```
-
-- [ ] **Step 4: Write `lib/supabase/browser.ts`**
+- [ ] **Step 3: Write `lib/supabase/browser.ts`**
 
 ```ts
 // lib/supabase/browser.ts
 import { createBrowserClient } from '@supabase/ssr'
 import type { Database } from '@/lib/database.types'
 
+// Used only for client-side Realtime subscriptions. All SELECT queries
+// for the trip page run server-side via the admin client.
 export function supabaseBrowser() {
   return createBrowserClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -836,35 +785,19 @@ export function supabaseBrowser() {
 }
 ```
 
-- [ ] **Step 5: Add `set_current_trip` RPC**
+> **Note:** No `lib/supabase/server.ts` is needed. Server Actions and Server Components use `supabaseAdmin()` and validate trip ownership in the action layer. The original server-client-with-GUC pattern was removed in the spec revision (see Task 10 note).
 
-Create `supabase/migrations/0003_rpc.sql`:
-
-```sql
-create or replace function set_current_trip(p_trip_id uuid)
-returns void language sql security definer as $$
-  select set_config('app.current_trip_id', p_trip_id::text, true)
-$$;
-revoke all on function set_current_trip(uuid) from public;
-grant execute on function set_current_trip(uuid) to anon, authenticated;
-```
-
-```bash
-npx supabase db reset
-npx supabase gen types typescript --local > lib/database.types.ts
-```
-
-- [ ] **Step 6: Verify typecheck**
+- [ ] **Step 4: Verify typecheck**
 
 ```bash
 npm run typecheck
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add lib/supabase/ lib/database.types.ts supabase/migrations/0003_rpc.sql
-git commit -m "feat: add three Supabase clients and set_current_trip RPC"
+git add lib/supabase/ lib/database.types.ts
+git commit -m "feat: add admin and browser Supabase clients"
 ```
 
 ---
@@ -884,7 +817,6 @@ git commit -m "feat: add three Supabase clients and set_current_trip RPC"
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase/admin'
-import { supabaseServer, setTripContext } from '@/lib/supabase/server'
 import { generateJoinCode } from '@/lib/codes'
 import { SESSION_COOKIE, newSessionToken } from '@/lib/session'
 import { CAMPING_TEMPLATE } from '@/lib/templates'
@@ -1002,17 +934,28 @@ import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { SESSION_COOKIE } from '@/lib/session'
 
+/**
+ * Resolves the participant from the session cookie and returns their
+ * trip context. All server actions call this and use `trip_id` / `join_code`
+ * to scope operations — these values are the trust boundary.
+ */
 export async function getCurrentParticipant() {
   const jar = await cookies()
   const token = jar.get(SESSION_COOKIE)?.value
   if (!token) throw new Error('Nicht eingeloggt')
   const { data } = await supabaseAdmin()
     .from('participants')
-    .select('id, trip_id, name, avatar_emoji')
+    .select('id, trip_id, name, avatar_emoji, trips(join_code)')
     .eq('session_token', token)
     .maybeSingle()
-  if (!data) throw new Error('Session ungültig')
-  return data
+  if (!data || !data.trips) throw new Error('Session ungültig')
+  return {
+    id: data.id,
+    name: data.name,
+    avatar_emoji: data.avatar_emoji,
+    trip_id: data.trip_id,
+    join_code: (data.trips as any).join_code as string,
+  }
 }
 ```
 
@@ -1022,37 +965,35 @@ export async function getCurrentParticipant() {
 // server-actions/items.ts
 'use server'
 import { revalidatePath } from 'next/cache'
-import { supabaseServer, setTripContext } from '@/lib/supabase/server'
+import { supabaseAdmin } from '@/lib/supabase/admin'
 import { getCurrentParticipant } from '@/lib/auth'
 
 export async function addItem(formData: FormData) {
   const p = await getCurrentParticipant()
-  const supa = await supabaseServer()
-  await setTripContext(supa, p.trip_id)
+  const supa = supabaseAdmin()
 
   const name = String(formData.get('name') || '').trim()
   const category = String(formData.get('category') || 'sonstiges')
   const quantity = Math.max(1, Number(formData.get('quantity_needed') || 1))
   const note = String(formData.get('note') || '').trim() || null
-
   if (!name) throw new Error('Name fehlt')
 
   await supa.from('items').insert({
     trip_id: p.trip_id, name, category, quantity_needed: quantity, note, created_by: p.id,
   })
-
-  const { data: trip } = await supa.from('trips').select('join_code').eq('id', p.trip_id).single()
-  revalidatePath(`/t/${trip!.join_code}`)
+  revalidatePath(`/t/${p.join_code}`)
 }
 
 export async function deleteItem(itemId: string) {
   const p = await getCurrentParticipant()
-  const supa = await supabaseServer()
-  await setTripContext(supa, p.trip_id)
+  const supa = supabaseAdmin()
 
-  await supa.from('items').delete().eq('id', itemId).eq('created_by', p.id)
-  const { data: trip } = await supa.from('trips').select('join_code').eq('id', p.trip_id).single()
-  revalidatePath(`/t/${trip!.join_code}`)
+  // Ownership AND trip-scope check — defense against forged item IDs.
+  await supa.from('items').delete()
+    .eq('id', itemId)
+    .eq('created_by', p.id)
+    .eq('trip_id', p.trip_id)
+  revalidatePath(`/t/${p.join_code}`)
 }
 ```
 
@@ -1062,31 +1003,33 @@ export async function deleteItem(itemId: string) {
 // server-actions/claims.ts
 'use server'
 import { revalidatePath } from 'next/cache'
-import { supabaseServer, setTripContext } from '@/lib/supabase/server'
+import { supabaseAdmin } from '@/lib/supabase/admin'
 import { getCurrentParticipant } from '@/lib/auth'
 
 export async function claimItem(itemId: string, quantity = 1) {
   const p = await getCurrentParticipant()
-  const supa = await supabaseServer()
-  await setTripContext(supa, p.trip_id)
+  const supa = supabaseAdmin()
 
-  // Upsert by (item_id, participant_id)
+  // Validate that the item belongs to the participant's trip before claiming.
+  const { data: item } = await supa.from('items')
+    .select('id').eq('id', itemId).eq('trip_id', p.trip_id).maybeSingle()
+  if (!item) throw new Error('Item gehört nicht zu deiner Tour')
+
   await supa.from('claims').upsert({
     item_id: itemId, participant_id: p.id, trip_id: p.trip_id, quantity,
   }, { onConflict: 'item_id,participant_id' })
-
-  const { data: trip } = await supa.from('trips').select('join_code').eq('id', p.trip_id).single()
-  revalidatePath(`/t/${trip!.join_code}`)
+  revalidatePath(`/t/${p.join_code}`)
 }
 
 export async function unclaimItem(itemId: string) {
   const p = await getCurrentParticipant()
-  const supa = await supabaseServer()
-  await setTripContext(supa, p.trip_id)
+  const supa = supabaseAdmin()
 
-  await supa.from('claims').delete().match({ item_id: itemId, participant_id: p.id })
-  const { data: trip } = await supa.from('trips').select('join_code').eq('id', p.trip_id).single()
-  revalidatePath(`/t/${trip!.join_code}`)
+  await supa.from('claims').delete()
+    .eq('item_id', itemId)
+    .eq('participant_id', p.id)
+    .eq('trip_id', p.trip_id)
+  revalidatePath(`/t/${p.join_code}`)
 }
 ```
 
@@ -1096,23 +1039,28 @@ export async function unclaimItem(itemId: string) {
 // server-actions/comments.ts
 'use server'
 import { revalidatePath } from 'next/cache'
-import { supabaseServer, setTripContext } from '@/lib/supabase/server'
+import { supabaseAdmin } from '@/lib/supabase/admin'
 import { getCurrentParticipant } from '@/lib/auth'
 
 export async function addComment(itemId: string, text: string) {
   const p = await getCurrentParticipant()
   const clean = text.trim()
   if (!clean) return
-  const supa = await supabaseServer()
-  await setTripContext(supa, p.trip_id)
+  const supa = supabaseAdmin()
+
+  // Validate item belongs to the participant's trip.
+  const { data: item } = await supa.from('items')
+    .select('id').eq('id', itemId).eq('trip_id', p.trip_id).maybeSingle()
+  if (!item) throw new Error('Item gehört nicht zu deiner Tour')
 
   await supa.from('comments').insert({
     item_id: itemId, participant_id: p.id, trip_id: p.trip_id, text: clean,
   })
-  const { data: trip } = await supa.from('trips').select('join_code').eq('id', p.trip_id).single()
-  revalidatePath(`/t/${trip!.join_code}`)
+  revalidatePath(`/t/${p.join_code}`)
 }
 ```
+
+> **Why service-role for mutations:** Each action validates `participant.trip_id` against the resource being touched, so the server side is the trust boundary regardless of which client we use. Service-role just removes the broken GUC dependency.
 
 - [ ] **Step 5: Typecheck + commit**
 
@@ -1889,15 +1837,18 @@ test('A creates trip; B joins via link; B claims; A sees claim', async () => {
   await b.getByRole('button', { name: 'Beitreten' }).click()
   await expect(b).toHaveURL(`/t/${code}`)
 
-  // B claims first item
-  const firstItem = b.locator('text=Zelt').first()
-  await firstItem.click()
+  // B claims the Zelt item (template seeds quantity_needed=2).
+  const zeltCard = b.locator('div', { hasText: 'Zelt' }).filter({ hasText: '0 / 2 zugesagt' }).first()
+  await expect(zeltCard).toBeVisible()
+  await zeltCard.click()
   await b.getByRole('button', { name: 'Ich bring eins' }).click()
   await b.keyboard.press('Escape')
+  // B's own view should reflect the claim immediately.
+  await expect(b.locator('div', { hasText: 'Zelt' }).filter({ hasText: '1 / 2 zugesagt' }).first()).toBeVisible()
 
-  // A should see Bert's avatar on Zelt
+  // A reloads and must see the new claim count — proves the write crossed contexts.
   await a.reload()
-  await expect(a.locator('text=Zelt').first()).toBeVisible()
+  await expect(a.locator('div', { hasText: 'Zelt' }).filter({ hasText: '1 / 2 zugesagt' }).first()).toBeVisible()
 
   await browser.close()
 })
