@@ -4,7 +4,7 @@
 
 **Goal:** Build a mobile-first web app where a small group of friends coordinates who brings what to a camping weekend — joinable via share-link, no account, realtime sync, comments per item.
 
-**Architecture:** Next.js 15 (App Router) frontend with Server Components + Server Actions, talking to Supabase (Postgres + Realtime). RLS enforces trip-scoped data access via a session-cookie → GUC mechanism inside Server Actions. Coolify deploys a Docker container.
+**Architecture:** Next.js 15 (App Router) frontend with Server Components + Server Actions, talking to Supabase (Postgres + Realtime). Server Actions are the trust boundary: each action resolves the participant from the session cookie and validates `trip_id` on every mutation using the service-role client. RLS is enabled as defense-in-depth (anon SELECT-only). Coolify deploys a Docker container.
 
 **Tech Stack:** Next.js 15, TypeScript (strict), TailwindCSS, shadcn/ui, Supabase (DB + Realtime), Vitest, Playwright, Docker, Coolify.
 
@@ -739,10 +739,10 @@ git commit -m "feat(db): RLS with anon SELECT-only + realtime publication"
 
 ## Phase 3 — Supabase Clients
 
-### Task 11: Three Supabase clients
+### Task 11: Supabase clients
 
 **Files:**
-- Create: `lib/supabase/admin.ts`, `lib/supabase/server.ts`, `lib/supabase/browser.ts`, `lib/types.ts`
+- Create: `lib/supabase/admin.ts`, `lib/supabase/browser.ts`, `lib/database.types.ts`
 
 - [ ] **Step 1: Generate DB types**
 
