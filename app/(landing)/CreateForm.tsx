@@ -5,13 +5,8 @@ import { Input } from '@/components/ui/input'
 
 export function CreateForm() {
   return (
-    <form action={createTrip} className="space-y-4 rounded-xl border border-border bg-card p-5">
-      <div>
-        <h2 className="text-sm font-semibold">Neue Tour anlegen</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Du bekommst danach einen Link zum Teilen.
-        </p>
-      </div>
+    <form action={createTrip} className="space-y-4 p-4">
+      <p className="text-xs text-muted-foreground">Du bekommst danach einen Link zum Teilen.</p>
 
       <div className="space-y-1.5">
         <label htmlFor="trip-name" className="text-xs font-medium text-muted-foreground">

@@ -115,3 +115,43 @@ export async function joinTrip(formData: FormData): Promise<void> {
   })
   redirect(`/t/${code}`)
 }
+
+/**
+ * Switch the active session cookie to one this browser already owns (from
+ * localStorage). Validates that the session_token belongs to a participant
+ * of the given trip — so a client can't forge entry into a trip they
+ * haven't joined.
+ *
+ * On invalid token (e.g., trip got deleted, participant got cleaned up),
+ * throws so the client can drop the stale entry.
+ */
+export async function enterTrip(joinCode: string, sessionToken: string): Promise<void> {
+  const code = String(joinCode || '').trim().toUpperCase()
+  const token = String(sessionToken || '').trim()
+  if (!code || !token) throw new Error('Code und Session fehlen')
+
+  const admin = supabaseAdmin()
+  const { data: trip } = await admin
+    .from('trips')
+    .select('id')
+    .eq('join_code', code)
+    .maybeSingle()
+  if (!trip) throw new Error('TRIP_NOT_FOUND')
+
+  const { data: participant } = await admin
+    .from('participants')
+    .select('id')
+    .eq('session_token', token)
+    .eq('trip_id', trip.id)
+    .maybeSingle()
+  if (!participant) throw new Error('SESSION_INVALID')
+
+  const jar = await cookies()
+  jar.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 180,
+  })
+  redirect(`/t/${code}`)
+}
