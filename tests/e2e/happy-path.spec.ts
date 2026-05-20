@@ -21,15 +21,19 @@ test('A creates trip; B joins via link; B claims; A sees claim', async () => {
   await expect(b).toHaveURL(`/t/${code}`)
 
   // B claims the Zelt item (template seeds quantity_needed=2).
-  const zeltCard = b.locator('div', { hasText: 'Zelt' }).filter({ hasText: '0 / 2 zugesagt' }).first()
+  // Card shows compact "0/2" counter; open the sheet which shows "0 / 2 zugesagt".
+  const zeltCard = b.getByRole('button').filter({ hasText: /^Zelt\s*0\/2/ }).first()
   await expect(zeltCard).toBeVisible()
   await zeltCard.click()
   await b.getByRole('button', { name: 'Ich bring eins' }).click()
+  // After claim, the sheet shows "1 / 2 zugesagt"
+  await expect(b.getByText('1 / 2 zugesagt').first()).toBeVisible()
   await b.keyboard.press('Escape')
-  await expect(b.locator('div', { hasText: 'Zelt' }).filter({ hasText: '1 / 2 zugesagt' }).first()).toBeVisible()
+  // Back on the list, the Zelt card now shows "1/2"
+  await expect(b.getByRole('button').filter({ hasText: /^Zelt\s*1\/2/ }).first()).toBeVisible()
 
   await a.reload()
-  await expect(a.locator('div', { hasText: 'Zelt' }).filter({ hasText: '1 / 2 zugesagt' }).first()).toBeVisible()
+  await expect(a.getByRole('button').filter({ hasText: /^Zelt\s*1\/2/ }).first()).toBeVisible()
 
   await browser.close()
 })
