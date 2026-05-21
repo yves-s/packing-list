@@ -5,11 +5,16 @@ import { supabaseAdmin } from '@/lib/supabase/admin'
 import { generateJoinCode } from '@/lib/codes'
 import { SESSION_COOKIE, newSessionToken } from '@/lib/session'
 import { CAMPING_TEMPLATE } from '@/lib/templates'
+import { isValidAvatarEmoji, pickRandomEmoji } from '@/lib/emojis'
 
-const EMOJI_POOL = ['🏕️', '🌲', '🔥', '🎒', '🌞', '🏔️', '🐻', '🦊', '🌿', '⛺']
-
-function pickEmoji() {
-  return EMOJI_POOL[Math.floor(Math.random() * EMOJI_POOL.length)]
+/**
+ * Reads an avatar emoji from the submitted form. Falls back to a random
+ * pick if the value is missing or not in the curated set — never trust
+ * arbitrary client-supplied strings into the DB.
+ */
+function readAvatarEmoji(formData: FormData): string {
+  const raw = String(formData.get('avatar_emoji') || '').trim()
+  return isValidAvatarEmoji(raw) ? raw : pickRandomEmoji()
 }
 
 function normalizeEmail(input: string): string {
@@ -73,7 +78,7 @@ export async function createTrip(formData: FormData): Promise<void> {
       trip_id: trip.id,
       name: yourName,
       email,
-      avatar_emoji: pickEmoji(),
+      avatar_emoji: readAvatarEmoji(formData),
       session_token: sessionToken,
     })
     .select('id')
@@ -152,7 +157,7 @@ export async function joinTrip(formData: FormData): Promise<void> {
     trip_id: trip.id,
     name: yourName,
     email,
-    avatar_emoji: pickEmoji(),
+    avatar_emoji: readAvatarEmoji(formData),
     session_token: sessionToken,
   })
 

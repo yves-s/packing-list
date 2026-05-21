@@ -3,6 +3,7 @@ import { joinTrip } from '@/server-actions/trips'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { EmojiPicker } from '@/components/EmojiPicker'
 
 function formatDateRange(from: string, to: string) {
   try {
@@ -67,6 +68,8 @@ export default async function JoinGate({ params }: { params: Promise<{ code: str
           </label>
           <Input id="invite-name" name="your_name" placeholder="Wie heißt du?" />
         </div>
+
+        <EmojiPicker />
 
         <Button type="submit" className="w-full">
           Beitreten

@@ -2,6 +2,7 @@
 import { createTrip } from '@/server-actions/trips'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { EmojiPicker } from '@/components/EmojiPicker'
 
 export function CreateForm() {
   return (
@@ -53,6 +54,8 @@ export function CreateForm() {
           Damit kannst du dich auf anderen Geräten wiederherstellen.
         </p>
       </div>
+
+      <EmojiPicker />
 
       <label className="flex items-start gap-2.5 cursor-pointer select-none rounded-md py-1 text-sm">
         <input
