@@ -1,7 +1,9 @@
 import { test, expect, chromium } from '@playwright/test'
 
-// Unique-per-run emails so re-running doesn't hit the "email exists in trip"
-// branch (which would redirect to /inbox-check instead of /t/CODE).
+// Unique-per-run emails. The "email exists in trip" branch reuses the
+// existing participant (cookie swap), which is a separate happy path
+// not exercised here. Fresh emails per run avoid cross-run pollution
+// in the shared remote Supabase project.
 const RUN_ID = Date.now()
 const ANNA_EMAIL = `anna+${RUN_ID}@e2e.test`
 const BERT_EMAIL = `bert+${RUN_ID}@e2e.test`

@@ -6,7 +6,9 @@ import { Input } from '@/components/ui/input'
 export function JoinForm() {
   return (
     <form action={joinTrip} className="space-y-4 p-4">
-      <p className="text-xs text-muted-foreground">Du hast einen Code von einem Buddy bekommen.</p>
+      <p className="text-xs text-muted-foreground">
+        Du hast einen Code von einem Buddy bekommen.
+      </p>
 
       <div className="space-y-1.5">
         <label htmlFor="join-code" className="text-xs font-medium text-muted-foreground">
@@ -26,13 +28,6 @@ export function JoinForm() {
       </div>
 
       <div className="space-y-1.5">
-        <label htmlFor="join-your-name" className="text-xs font-medium text-muted-foreground">
-          Dein Name
-        </label>
-        <Input id="join-your-name" name="your_name" placeholder="Wie heißt du?" required />
-      </div>
-
-      <div className="space-y-1.5">
         <label htmlFor="join-email" className="text-xs font-medium text-muted-foreground">
           E-Mail
         </label>
@@ -44,9 +39,16 @@ export function JoinForm() {
           autoComplete="email"
           required
         />
-        <p className="text-[11px] text-muted-foreground">
-          Wenn du schon dabei warst, kommst du mit dem Magic-Link wieder rein.
-        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <label htmlFor="join-your-name" className="text-xs font-medium text-muted-foreground">
+          Dein Name
+          <span className="ml-1 font-normal text-muted-foreground/70">
+            (nur beim ersten Mal nötig)
+          </span>
+        </label>
+        <Input id="join-your-name" name="your_name" placeholder="Wie heißt du?" />
       </div>
 
       <Button type="submit" variant="secondary" className="w-full">
