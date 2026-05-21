@@ -1,7 +1,8 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTripRealtime } from '@/lib/realtime'
+import { rememberTrip } from '@/lib/trip-memory'
 import { CategorySection } from '@/components/CategorySection'
 import { Filter, type FilterValue } from '@/components/Filter'
 import { ParticipantAvatars } from '@/components/ParticipantAvatars'
@@ -42,6 +43,28 @@ export function TripClient(props: TripClientProps) {
   const router = useRouter()
   const [filter, setFilter] = useState<FilterValue>('alle')
   useTripRealtime(props.trip.id, () => router.refresh())
+
+  // Persist this trip to localStorage so the landing page can offer
+  // one-tap return. Runs on mount + whenever identity/trip changes.
+  useEffect(() => {
+    rememberTrip({
+      joinCode: props.trip.join_code,
+      sessionToken: props.me.session_token,
+      tripName: props.trip.name,
+      myName: props.me.name,
+      myEmoji: props.me.avatar_emoji,
+      dateFrom: props.trip.date_from,
+      dateTo: props.trip.date_to,
+    })
+  }, [
+    props.trip.join_code,
+    props.trip.name,
+    props.trip.date_from,
+    props.trip.date_to,
+    props.me.session_token,
+    props.me.name,
+    props.me.avatar_emoji,
+  ])
 
   const visibleItems = props.items.filter((i) => {
     if (filter === 'alle') return true

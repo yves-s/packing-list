@@ -5,13 +5,8 @@ import { Input } from '@/components/ui/input'
 
 export function CreateForm() {
   return (
-    <form action={createTrip} className="space-y-4 rounded-xl border border-border bg-card p-5">
-      <div>
-        <h2 className="text-sm font-semibold">Neue Tour anlegen</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Du bekommst danach einen Link zum Teilen.
-        </p>
-      </div>
+    <form action={createTrip} className="space-y-4 p-4">
+      <p className="text-xs text-muted-foreground">Du bekommst danach einen Link zum Teilen.</p>
 
       <div className="space-y-1.5">
         <label htmlFor="trip-name" className="text-xs font-medium text-muted-foreground">
@@ -40,6 +35,23 @@ export function CreateForm() {
           Dein Name
         </label>
         <Input id="create-your-name" name="your_name" placeholder="Wie heißt du?" required />
+      </div>
+
+      <div className="space-y-1.5">
+        <label htmlFor="create-email" className="text-xs font-medium text-muted-foreground">
+          E-Mail
+        </label>
+        <Input
+          id="create-email"
+          name="email"
+          type="email"
+          placeholder="du@example.com"
+          autoComplete="email"
+          required
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Damit kannst du dich auf anderen Geräten wiederherstellen.
+        </p>
       </div>
 
       <label className="flex items-start gap-2.5 cursor-pointer select-none rounded-md py-1 text-sm">

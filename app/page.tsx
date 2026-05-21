@@ -1,6 +1,8 @@
 import { Tent } from 'lucide-react'
 import { CreateForm } from './(landing)/CreateForm'
 import { JoinForm } from './(landing)/JoinForm'
+import { KnownTripsList } from './(landing)/KnownTripsList'
+import { LandingActions } from './(landing)/LandingActions'
 
 export default function LandingPage() {
   return (
@@ -17,19 +19,12 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <div className="mt-10 space-y-4">
-        <CreateForm />
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center">
-            <span className="bg-background px-3 text-xs uppercase tracking-wider text-muted-foreground">
-              oder
-            </span>
-          </div>
-        </div>
-        <JoinForm />
+      <div className="mt-10 space-y-6">
+        <KnownTripsList />
+        <LandingActions
+          createSlot={<CreateForm />}
+          joinSlot={<JoinForm />}
+        />
       </div>
     </main>
   )

@@ -188,6 +188,7 @@ export type Database = {
       participants: {
         Row: {
           avatar_emoji: string
+          email: string | null
           id: string
           joined_at: string
           name: string
@@ -196,6 +197,7 @@ export type Database = {
         }
         Insert: {
           avatar_emoji?: string
+          email?: string | null
           id?: string
           joined_at?: string
           name: string
@@ -204,6 +206,7 @@ export type Database = {
         }
         Update: {
           avatar_emoji?: string
+          email?: string | null
           id?: string
           joined_at?: string
           name?: string
