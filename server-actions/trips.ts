@@ -37,9 +37,20 @@ function setSessionCookie(jar: Awaited<ReturnType<typeof cookies>>, token: strin
 }
 
 /**
- * Fires a Supabase magic link for the given email. The link redirects back
- * to /auth/callback with state in the query string so we know what to do
- * post-verification (enter a specific trip, or recover all trips).
+ * Sends or generates a Supabase magic link for the given email. The link
+ * redirects back to /auth/callback with state in the query string so we
+ * know what to do post-verification (enter a specific trip, or recover
+ * all trips).
+ *
+ * Two modes:
+ * - DEV (NODE_ENV !== 'production' OR SUPABASE_DEV_MAGIC_LINK=1):
+ *   Uses admin.generateLink to produce the URL WITHOUT sending an email.
+ *   The URL is printed to the server logs (and returned so the caller can
+ *   surface it). Bypasses Supabase's default 2-mails/hour rate limit.
+ * - PROD: Uses signInWithOtp which delivers email via Supabase's configured
+ *   SMTP (Custom SMTP recommended for production).
+ *
+ * Returns the generated URL in dev mode; undefined in prod mode.
  */
 async function sendMagicLink({
   email,
@@ -47,19 +58,37 @@ async function sendMagicLink({
 }: {
   email: string
   redirectPath: string
-}): Promise<void> {
+}): Promise<string | undefined> {
   const admin = supabaseAdmin()
   const origin = await getAppOrigin()
   const fullRedirect = `${origin}/auth/callback?next=${encodeURIComponent(redirectPath)}`
+
+  const isDev = process.env.NODE_ENV !== 'production' || process.env.SUPABASE_DEV_MAGIC_LINK === '1'
+
+  if (isDev) {
+    const { data, error } = await admin.auth.admin.generateLink({
+      type: 'magiclink',
+      email,
+      options: { redirectTo: fullRedirect },
+    })
+    if (error || !data?.properties?.action_link) {
+      console.error('[sendMagicLink:dev]', error)
+      throw new Error('Magic-Link konnte nicht erzeugt werden.')
+    }
+    const url = data.properties.action_link
+    console.log('\n[DEV MAGIC LINK for ' + email + ']\n  ' + url + '\n')
+    return url
+  }
+
   const { error } = await admin.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: fullRedirect, shouldCreateUser: true },
   })
   if (error) {
-    // Don't leak Supabase rate-limit info to the user, but log it.
-    console.error('[sendMagicLink]', error)
+    console.error('[sendMagicLink:prod]', error)
     throw new Error('Magic-Link konnte nicht gesendet werden. Versuch es gleich nochmal.')
   }
+  return undefined
 }
 
 export async function createTrip(formData: FormData): Promise<void> {
@@ -177,7 +206,10 @@ export async function joinTrip(formData: FormData): Promise<void> {
   if (existing) {
     // Don't trust the cookie — require a magic-link click to re-enter
     // this identity. Prevents trivial spoofing.
-    await sendMagicLink({ email, redirectPath: `/t/${code}` })
+    const devLink = await sendMagicLink({ email, redirectPath: `/t/${code}` })
+    // In dev, auto-follow the link so the developer doesn't have to dig
+    // through logs or wait for emails.
+    if (devLink) redirect(devLink)
     redirect(`/inbox-check?email=${encodeURIComponent(email)}&code=${code}`)
   }
 
@@ -213,7 +245,8 @@ export async function requestRecovery(formData: FormData): Promise<void> {
   if (!isValidEmail(rawEmail)) throw new Error('E-Mail sieht komisch aus')
   const email = normalizeEmail(rawEmail)
 
-  await sendMagicLink({ email, redirectPath: '/recover' })
+  const devLink = await sendMagicLink({ email, redirectPath: '/recover' })
+  if (devLink) redirect(devLink)
   redirect(`/inbox-check?email=${encodeURIComponent(email)}`)
 }
 
