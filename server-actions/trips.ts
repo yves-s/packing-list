@@ -1,5 +1,5 @@
 'use server'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { generateJoinCode } from '@/lib/codes'
@@ -12,16 +12,69 @@ function pickEmoji() {
   return EMOJI_POOL[Math.floor(Math.random() * EMOJI_POOL.length)]
 }
 
+function normalizeEmail(input: string): string {
+  return input.trim().toLowerCase()
+}
+
+function isValidEmail(input: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input)
+}
+
+async function getAppOrigin(): Promise<string> {
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host')
+  const proto = h.get('x-forwarded-proto') ?? 'http'
+  return `${proto}://${host ?? 'localhost:3000'}`
+}
+
+function setSessionCookie(jar: Awaited<ReturnType<typeof cookies>>, token: string) {
+  jar.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 180,
+  })
+}
+
+/**
+ * Fires a Supabase magic link for the given email. The link redirects back
+ * to /auth/callback with state in the query string so we know what to do
+ * post-verification (enter a specific trip, or recover all trips).
+ */
+async function sendMagicLink({
+  email,
+  redirectPath,
+}: {
+  email: string
+  redirectPath: string
+}): Promise<void> {
+  const admin = supabaseAdmin()
+  const origin = await getAppOrigin()
+  const fullRedirect = `${origin}/auth/callback?next=${encodeURIComponent(redirectPath)}`
+  const { error } = await admin.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: fullRedirect, shouldCreateUser: true },
+  })
+  if (error) {
+    // Don't leak Supabase rate-limit info to the user, but log it.
+    console.error('[sendMagicLink]', error)
+    throw new Error('Magic-Link konnte nicht gesendet werden. Versuch es gleich nochmal.')
+  }
+}
+
 export async function createTrip(formData: FormData): Promise<void> {
   const name = String(formData.get('name') || '').trim()
   const dateFrom = String(formData.get('date_from') || '')
   const dateTo = String(formData.get('date_to') || '')
   const yourName = String(formData.get('your_name') || '').trim()
+  const rawEmail = String(formData.get('email') || '').trim()
   const useTemplate = formData.get('use_template') === 'on'
 
-  if (!name || !dateFrom || !dateTo || !yourName) {
+  if (!name || !dateFrom || !dateTo || !yourName || !rawEmail) {
     throw new Error('Bitte alle Felder ausfüllen')
   }
+  if (!isValidEmail(rawEmail)) throw new Error('E-Mail sieht komisch aus')
+  const email = normalizeEmail(rawEmail)
 
   const admin = supabaseAdmin()
   // 1) Create trip with NULL created_by
@@ -51,6 +104,7 @@ export async function createTrip(formData: FormData): Promise<void> {
     .insert({
       trip_id: trip.id,
       name: yourName,
+      email,
       avatar_emoji: pickEmoji(),
       session_token: sessionToken,
     })
@@ -74,21 +128,35 @@ export async function createTrip(formData: FormData): Promise<void> {
     )
   }
 
-  // 5) Set cookie & redirect
+  // 5) Fire magic link (cross-device recovery) — fire-and-forget; user has
+  // immediate access via cookie. If email is rate-limited, we swallow it.
+  try {
+    await sendMagicLink({ email, redirectPath: `/t/${joinCode}` })
+  } catch (e) {
+    console.warn('[createTrip] magic-link send failed (non-fatal)', e)
+  }
+
+  // 6) Set cookie & redirect
   const jar = await cookies()
-  jar.set(SESSION_COOKIE, sessionToken, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 180,
-  })
+  setSessionCookie(jar, sessionToken)
   redirect(`/t/${joinCode}`)
 }
 
+/**
+ * Joins a trip. Two paths, both redirect:
+ * - New email for this trip → create participant, set cookie, fire optional
+ *   magic link for later cross-device recovery, redirect to /t/CODE.
+ * - Email already exists for this trip → DO NOT create a new participant.
+ *   Send a magic link to that email and redirect to /inbox-check?email=X&code=Y.
+ *   The click in the inbox sets the cookie to the existing identity.
+ */
 export async function joinTrip(formData: FormData): Promise<void> {
   const code = String(formData.get('code') || '').trim().toUpperCase()
   const yourName = String(formData.get('your_name') || '').trim()
-  if (!code || !yourName) throw new Error('Code und Name sind Pflicht')
+  const rawEmail = String(formData.get('email') || '').trim()
+  if (!code || !yourName || !rawEmail) throw new Error('Code, Name und E-Mail sind Pflicht')
+  if (!isValidEmail(rawEmail)) throw new Error('E-Mail sieht komisch aus')
+  const email = normalizeEmail(rawEmail)
 
   const admin = supabaseAdmin()
   const { data: trip } = await admin
@@ -98,22 +166,55 @@ export async function joinTrip(formData: FormData): Promise<void> {
     .maybeSingle()
   if (!trip) throw new Error('Diesen Code gibt\'s nicht. Schau nochmal.')
 
+  // Check if this email is already in the trip — case-insensitive.
+  const { data: existing } = await admin
+    .from('participants')
+    .select('id')
+    .eq('trip_id', trip.id)
+    .ilike('email', email)
+    .maybeSingle()
+
+  if (existing) {
+    // Don't trust the cookie — require a magic-link click to re-enter
+    // this identity. Prevents trivial spoofing.
+    await sendMagicLink({ email, redirectPath: `/t/${code}` })
+    redirect(`/inbox-check?email=${encodeURIComponent(email)}&code=${code}`)
+  }
+
+  // New email for this trip → create participant.
   const sessionToken = newSessionToken()
   await admin.from('participants').insert({
     trip_id: trip.id,
     name: yourName,
+    email,
     avatar_emoji: pickEmoji(),
     session_token: sessionToken,
   })
 
+  // Fire magic link in background for future cross-device recovery.
+  try {
+    await sendMagicLink({ email, redirectPath: `/t/${code}` })
+  } catch (e) {
+    console.warn('[joinTrip] magic-link send failed (non-fatal)', e)
+  }
+
   const jar = await cookies()
-  jar.set(SESSION_COOKIE, sessionToken, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 180,
-  })
+  setSessionCookie(jar, sessionToken)
   redirect(`/t/${code}`)
+}
+
+/**
+ * Triggered from the landing "Schon dabei?"-Form. Sends a Magic-Link to
+ * the email; clicking it lands the user on /recover with the email in the
+ * query string, where their trips are hydrated into localStorage.
+ */
+export async function requestRecovery(formData: FormData): Promise<void> {
+  const rawEmail = String(formData.get('email') || '').trim()
+  if (!isValidEmail(rawEmail)) throw new Error('E-Mail sieht komisch aus')
+  const email = normalizeEmail(rawEmail)
+
+  await sendMagicLink({ email, redirectPath: '/recover' })
+  redirect(`/inbox-check?email=${encodeURIComponent(email)}`)
 }
 
 /**
@@ -121,9 +222,6 @@ export async function joinTrip(formData: FormData): Promise<void> {
  * localStorage). Validates that the session_token belongs to a participant
  * of the given trip — so a client can't forge entry into a trip they
  * haven't joined.
- *
- * On invalid token (e.g., trip got deleted, participant got cleaned up),
- * throws so the client can drop the stale entry.
  */
 export async function enterTrip(joinCode: string, sessionToken: string): Promise<void> {
   const code = String(joinCode || '').trim().toUpperCase()
@@ -147,11 +245,6 @@ export async function enterTrip(joinCode: string, sessionToken: string): Promise
   if (!participant) throw new Error('SESSION_INVALID')
 
   const jar = await cookies()
-  jar.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 180,
-  })
+  setSessionCookie(jar, token)
   redirect(`/t/${code}`)
 }

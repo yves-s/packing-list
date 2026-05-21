@@ -1,10 +1,13 @@
 'use client'
 import { useEffect, useState, type ReactNode } from 'react'
 import { getKnownTrips } from '@/lib/trip-memory'
-import { Plus, LogIn, ChevronDown } from 'lucide-react'
+import { Plus, LogIn, Mail, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { requestRecovery } from '@/server-actions/trips'
 
-type Mode = 'none' | 'create' | 'join'
+type Mode = 'none' | 'create' | 'join' | 'recover'
 
 export function LandingActions({
   createSlot,
@@ -54,7 +57,42 @@ export function LandingActions({
       >
         {joinSlot}
       </ActionBlock>
+
+      <ActionBlock
+        open={mode === 'recover'}
+        onToggle={() => setMode(mode === 'recover' ? 'none' : 'recover')}
+        icon={<Mail className="h-4 w-4" strokeWidth={1.75} />}
+        label="Schon dabei? Identität wiederherstellen"
+      >
+        <RecoverForm />
+      </ActionBlock>
     </section>
+  )
+}
+
+function RecoverForm() {
+  return (
+    <form action={requestRecovery} className="space-y-3 p-4">
+      <p className="text-xs text-muted-foreground">
+        Trag deine E-Mail ein. Wir senden dir einen Link, der dich auf diesem Gerät wieder in alle deine Touren bringt.
+      </p>
+      <div className="space-y-1.5">
+        <label htmlFor="recover-email" className="text-xs font-medium text-muted-foreground">
+          E-Mail
+        </label>
+        <Input
+          id="recover-email"
+          name="email"
+          type="email"
+          placeholder="du@example.com"
+          autoComplete="email"
+          required
+        />
+      </div>
+      <Button type="submit" variant="secondary" className="w-full">
+        Magic-Link senden
+      </Button>
+    </form>
   )
 }
 

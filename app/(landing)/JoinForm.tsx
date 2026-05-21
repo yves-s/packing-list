@@ -32,6 +32,23 @@ export function JoinForm() {
         <Input id="join-your-name" name="your_name" placeholder="Wie heißt du?" required />
       </div>
 
+      <div className="space-y-1.5">
+        <label htmlFor="join-email" className="text-xs font-medium text-muted-foreground">
+          E-Mail
+        </label>
+        <Input
+          id="join-email"
+          name="email"
+          type="email"
+          placeholder="du@example.com"
+          autoComplete="email"
+          required
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Wenn du schon dabei warst, kommst du mit dem Magic-Link wieder rein.
+        </p>
+      </div>
+
       <Button type="submit" variant="secondary" className="w-full">
         Beitreten
       </Button>

@@ -37,6 +37,23 @@ export function CreateForm() {
         <Input id="create-your-name" name="your_name" placeholder="Wie heißt du?" required />
       </div>
 
+      <div className="space-y-1.5">
+        <label htmlFor="create-email" className="text-xs font-medium text-muted-foreground">
+          E-Mail
+        </label>
+        <Input
+          id="create-email"
+          name="email"
+          type="email"
+          placeholder="du@example.com"
+          autoComplete="email"
+          required
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Damit kannst du dich auf anderen Geräten wiederherstellen.
+        </p>
+      </div>
+
       <label className="flex items-start gap-2.5 cursor-pointer select-none rounded-md py-1 text-sm">
         <input
           type="checkbox"
