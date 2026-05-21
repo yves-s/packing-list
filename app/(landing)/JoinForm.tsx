@@ -2,6 +2,7 @@
 import { joinTrip } from '@/server-actions/trips'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { EmojiPicker } from '@/components/EmojiPicker'
 
 export function JoinForm() {
   return (
@@ -50,6 +51,8 @@ export function JoinForm() {
         </label>
         <Input id="join-your-name" name="your_name" placeholder="Wie heißt du?" />
       </div>
+
+      <EmojiPicker />
 
       <Button type="submit" variant="secondary" className="w-full">
         Beitreten
