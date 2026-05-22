@@ -6,8 +6,10 @@ import { rememberTrip } from '@/lib/trip-memory'
 import { CategorySection } from '@/components/CategorySection'
 import { Filter, type FilterValue } from '@/components/Filter'
 import { ParticipantAvatars } from '@/components/ParticipantAvatars'
+import { ParticipantsSheet } from '@/components/ParticipantsSheet'
 import { ShareButton } from '@/components/ShareButton'
 import { AddItemFAB } from '@/components/AddItemFAB'
+import { ChevronRight } from 'lucide-react'
 import type { Category } from '@/lib/templates'
 
 interface TripClientProps {
@@ -42,6 +44,7 @@ function formatDateRange(from: string, to: string) {
 export function TripClient(props: TripClientProps) {
   const router = useRouter()
   const [filter, setFilter] = useState<FilterValue>('alle')
+  const [participantsOpen, setParticipantsOpen] = useState(false)
   useTripRealtime(props.trip.id, () => router.refresh())
 
   // Persist this trip to localStorage so the landing page can offer
@@ -93,7 +96,15 @@ export function TripClient(props: TripClientProps) {
             <ShareButton joinCode={props.trip.join_code} />
           </div>
           <div className="mt-3 flex items-center justify-between gap-3">
-            <ParticipantAvatars participants={props.participants} />
+            <button
+              type="button"
+              onClick={() => setParticipantsOpen(true)}
+              aria-label={`Teilnehmer anzeigen (${props.participants.length})`}
+              className="-ml-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition active:bg-muted"
+            >
+              <ParticipantAvatars participants={props.participants} />
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
+            </button>
             <span className="text-xs text-muted-foreground tabular-nums">
               {props.items.length} Sachen
             </span>
@@ -133,6 +144,13 @@ export function TripClient(props: TripClientProps) {
       )}
 
       <AddItemFAB />
+
+      <ParticipantsSheet
+        open={participantsOpen}
+        onClose={() => setParticipantsOpen(false)}
+        participants={props.participants}
+        meId={props.me.id}
+      />
     </main>
   )
 }
