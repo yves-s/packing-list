@@ -8,6 +8,7 @@ import { claimItem, unclaimItem } from '@/server-actions/claims'
 import { addComment } from '@/server-actions/comments'
 import { deleteItem, updateItem } from '@/server-actions/items'
 import { Trash2, Send, Pencil } from 'lucide-react'
+import { useKeyboardInset } from '@/lib/use-keyboard-inset'
 
 interface ItemSheetProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,6 +28,7 @@ export function ItemSheet({ item, claims, comments, participants, me, onClose }:
   const [text, setText] = useState('')
   const [isPending, start] = useTransition()
   const [editing, setEditing] = useState(false)
+  const keyboardInset = useKeyboardInset(true)
 
   // Scope to THIS item.
   const itemClaims = claims.filter((c) => c.item_id === item.id)
@@ -39,7 +41,11 @@ export function ItemSheet({ item, claims, comments, participants, me, onClose }:
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="bottom"
-        className="flex max-h-[88dvh] flex-col rounded-t-2xl border-t p-0 sm:max-w-lg sm:mx-auto"
+        className="flex flex-col rounded-t-2xl border-t p-0 sm:max-w-lg sm:mx-auto"
+        style={{
+          bottom: keyboardInset,
+          maxHeight: `calc(88dvh - ${keyboardInset}px)`,
+        }}
       >
         <SheetHeader className="border-b px-5 py-4">
           <SheetTitle className="text-lg leading-tight">{item.name}</SheetTitle>

@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Plus } from 'lucide-react'
 import { addItem } from '@/server-actions/items'
 import { categoryOrder } from '@/lib/templates'
+import { useKeyboardInset } from '@/lib/use-keyboard-inset'
 
 const CATEGORY_LABEL: Record<string, string> = {
   schlafen: 'Schlafen',
@@ -19,6 +20,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 export function AddItemFAB() {
   const [open, setOpen] = useState(false)
   const [isPending, start] = useTransition()
+  const keyboardInset = useKeyboardInset(open)
 
   return (
     <>
@@ -34,7 +36,11 @@ export function AddItemFAB() {
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
           side="bottom"
-          className="flex max-h-[85dvh] flex-col rounded-t-2xl border-t p-0 sm:max-w-lg sm:mx-auto"
+          className="flex flex-col rounded-t-2xl border-t p-0 sm:max-w-lg sm:mx-auto"
+          style={{
+            bottom: keyboardInset,
+            maxHeight: `calc(85dvh - ${keyboardInset}px)`,
+          }}
         >
           <SheetHeader className="border-b px-5 py-4">
             <SheetTitle className="text-lg">Neue Sache</SheetTitle>
